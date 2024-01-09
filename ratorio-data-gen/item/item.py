@@ -2,6 +2,7 @@ import config
 import difflib
 import logging
 import os
+import re
 import requests
 import util
 from bs4 import BeautifulSoup
@@ -180,6 +181,146 @@ def get_item_kind(kind, place):
     return item_kind.get(kind, 999) + item_place.get(place[0], 0)
 
 
+def exist_parameter(lines: list, keyword):
+    if f"{keyword} : " in lines:
+        return True
+    elif f" {keyword} : " in lines:
+        return True
+    return False
+
+
+def is_card(lines: list):
+    return (
+        exist_parameter(lines, "重量")
+        and exist_parameter(lines, "系列")
+        and get_parameter_value(lines, "系列") == "カード"
+    )
+
+
+def is_equip(lines: list):
+    return (
+        exist_parameter(lines, "重量")
+        and exist_parameter(lines, "系列")
+        and get_parameter_value(lines, "系列") != "カード"
+    )
+
+
+def is_item(lines: list):
+    return exist_parameter(lines, "重量") and not exist_parameter(lines, "系列")
+
+
+def is_enchant(lines: list):
+    return not exist_parameter(lines, "重量")
+
+
+def get_parameter_value(lines: list, keyword):
+    try:
+        return lines[lines.index(f"{keyword} : ") + 1].strip()
+    except:
+        return lines[lines.index(f" {keyword} : ") + 1].strip()
+
+
+def get_armor_elemental(blocks: list):
+    op = []
+    for i in range(1, len(blocks) - 1):
+        r = re.match("鎧に(.+)属性を付与する", blocks[i].strip())
+        if r:
+            elemental = {
+                "水": 1,
+                "地": 2,
+                "火": 3,
+                "風": 4,
+                "毒": 5,
+                "聖": 6,
+                "闇": 7,
+                "念": 8,
+                "死": 9,
+            }
+            op = [198, int(elemental.get(r.group(1), 99))]
+            break
+    return op
+
+
+def create_item(terms):
+    r = requests.get(f"https://rotool.gungho.jp/item/{terms[0]}/0/")
+    soup = BeautifulSoup(r.text, "html.parser")
+    node = soup.select_one("div.description>p.note")
+    blocks = node.get_text("<>").split("―――――――――――――")
+    lines = blocks[-1].split("<>")
+    if is_item(lines):
+        log.debug(f"{terms} is item")
+        return None
+    if is_card(lines):
+        # TODO : implement create card.dat
+        log.debug(f"{terms} is card")
+        return None
+    if is_enchant(lines):
+        # TODO : implement create card.dat
+        log.debug(f"{terms} is enchant")
+        return None
+    if is_equip(lines):
+        log.debug(f"{terms} is equip")
+        series = get_parameter_value(lines, "系列")
+        place = (
+            "-"
+            if not exist_parameter(lines, "位置")
+            else get_parameter_value(lines, "位置")
+        )
+        kind = get_item_kind(series, place)
+        equip = get_parameter_value(lines, "装備")
+        slot = get_parameter_value(lines, "スロット")
+        weight = get_parameter_value(lines, "重量")
+        rlevel = get_parameter_value(lines, "要求レベル")
+        op = []
+        if get_parameter_value(lines, "破損") == "しない":
+            op.extend([194, 1])
+        if kind == 999:
+            log.warning(f"未対応[{terms}]")
+            return None
+        elif kind < 50:  # 武器
+            atk = get_parameter_value(lines, "Atk")
+            wlevel = get_parameter_value(lines, "武器レベル")
+            op.extend(
+                [88 if kind == 9 else 100, int(get_parameter_value(lines, "Matk"))]
+            )
+            if get_parameter_value(lines, "属性") != "無":
+                elemental = {
+                    "水": 1,
+                    "地": 2,
+                    "火": 3,
+                    "風": 4,
+                    "毒": 5,
+                    "聖": 6,
+                    "闇": 7,
+                    "念": 8,
+                    "死": 9,
+                }
+                op.extend(
+                    [20, int(elemental.get(get_parameter_value(lines, "属性"), 99))]
+                )
+        else:  # 防具
+            op.extend(get_armor_elemental(blocks))
+            atk = get_parameter_value(lines, "Def")
+            wlevel = 0
+        item_data = [
+            9999999999,
+            kind,
+            item_equip.get(equip, 999),
+            int(atk),
+            int(wlevel),
+            int(slot),
+            int(weight),
+            int(rlevel),
+            terms[1],
+            "カナ",
+            "0",
+        ]
+        item_data.extend(op)
+        item_data.append(0) # terminator
+        return item_data
+    return None
+
+
 def gen_item_dat(items_by_name, cards_by_name):
     from_text = ""
     if os.path.exists(config.id2displayname_path + ".prev"):
@@ -203,60 +344,8 @@ def gen_item_dat(items_by_name, cards_by_name):
         item_id = util.lookup_item_dict(items_by_name, terms[1])
         card_id = util.lookup_card_dict(cards_by_name, terms[1])
         if item_id != "{item_id}" or card_id != "{card_id}":
+            log.debug(f"登録済み [{terms}]")
             continue
+        item = create_item(terms)
+        print(str(item).replace("'", '"'))
 
-        r = requests.get(f"https://rotool.gungho.jp/item/{terms[0]}/0/")
-        if r.status_code != 200:
-            log.error(f"[{r.status_code}] {r.text}")
-            continue
-        soup = BeautifulSoup(r.text, "html.parser")
-        node = soup.select_one("div.description>p.note")
-        block = node.get_text("<>").split("―――――――――――――")
-        if "重量 : " in block[-1]:
-            if "系列 : " not in block[-1]:
-                log.info(f"{terms[1]} is item")
-                continue
-            lines = block[-1].split("<>")
-            if lines[lines.index("系列 : ") + 1] == "カード":
-                # TODO : implement create card.dat
-                log.info(f"{terms[1]} is card")
-                continue
-            log.info(f"{terms[1]} is equip")
-            series = lines[lines.index("系列 : ") + 1].strip()
-            place = "-"
-            if "位置 : " in lines:
-                place = lines[lines.index("位置 : ") + 1].strip()
-            kind = get_item_kind(series, place)
-            equip = "<>".join(lines[lines.index("装備 : ")+1:])
-            if kind == 999:
-                log.warning(f"未対応[{terms[1]}]")
-                continue
-            elif kind < 50:
-                atk = lines[lines.index("Atk : ") + 1].strip()
-                # matk = lines[lines.index(" Matk : ") + 1].strip()
-                wlevel = lines[lines.index("武器レベル : ") + 1].strip()
-            else:
-                atk = lines[lines.index("Def : ") + 1].strip()
-                wlevel = 0
-            slot = lines[lines.index(" スロット : ") + 1].strip()
-            weight = lines[lines.index("重量 : ") + 1].strip()
-            rlevel = lines[lines.index("要求レベル : ") + 1].strip()
-            item_data = []
-            item_data.append(item_id)
-            item_data.append(kind)
-            item_data.append(item_equip.get(equip, 999))
-            item_data.append(int(atk))
-            item_data.append(int(wlevel))
-            item_data.append(int(slot))
-            item_data.append(int(weight))
-            item_data.append(int(rlevel))
-            item_data.append(terms[1])
-            item_data.append("")
-            item_data.append("0")
-            item_data.append(0)
-
-            # print(block[-1])
-            print(str(item_data).replace("'","\""))
-        else:
-            # TODO : implement create card.dat
-            log.info(f"{terms[1]} is enchant")

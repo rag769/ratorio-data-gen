@@ -5,6 +5,7 @@ import ench.fides as fides
 import ench.pharos as pharos
 import ench.special as special
 import ench.star as start
+import item.item as item
 import json
 import os
 import re
@@ -136,4 +137,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    dat = item.create_item([550028,"アドゥルテル・フィデス・フォックステイル"])
+    print(str(dat).replace("'", '"'))
