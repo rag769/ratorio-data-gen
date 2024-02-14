@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 ENCHANTER_PREFIX = "スペシャルエンチャント（"
 ENCHANTER_SUFFIX = "）"
 ENCHANTER_EXCLUDES = ["ピカニャン"]
+default_refining = []
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +97,23 @@ def get_enchant_refining(condition):
     return 0 if refining == None else int(refining.group(1))
 
 
+def get_default_refining(table):
+    refining = [0,0,0,0]
+    for tr in table.select("tbody>tr"):
+        if tr.select_one("td:nth-child(1)").text.strip() == "エンチャントに必要な対象アイテムの精錬値":
+            for line in tr.select_one("td:nth-child(2)").get_text(",").replace("\n","").split(","):
+                terms = line.split(":")
+                r = re.match("第(\\d)～?(\\d)?スロット", terms[0].strip())
+                if r :
+                    min = int(r.group(1))
+                    max = int(r.group(2)) if r.group(2) else min
+                    r = re.match(".*精錬値(\\d+)", terms[1].strip(), flags=re.DOTALL)
+                    v = 0 if r == None else int(r.group(1))
+                    for slot in range(min, max+1):
+                        refining[slot-1] = v
+            break
+    return refining
+
 def build_enchants(enchanter, table, equips):
     equip_names = get_equip_names(table)
     for equip_name in equip_names:
@@ -114,7 +132,10 @@ def build_enchants(enchanter, table, equips):
             # スロットエンチャント skip
             if enchant_slot is None:
                 continue
-            refining = get_enchant_refining(condition_node)
+            if default_refining:
+                refining = default_refining[enchant_slot-1]
+            else:
+                refining = get_enchant_refining(condition_node)
             prev_data_node = data_node
 
             enchant_data = []
@@ -148,22 +169,29 @@ def build_enchants(enchanter, table, equips):
 
 
 def crawl(equips):
+    global default_refining
     r = requests.get(
         "https://ragnarokonline.gungho.jp/gameguide/system/equip-powerup/special-enchant.html"
     )
     soup = BeautifulSoup(r.text, "html.parser")
-    nodes = soup.select(".hl02>span, #main3column>table")
+    nodes = soup.select(".hl02>span, h4, #main3column table")
     enchanter = None
 
     enchlist = []
     for node in nodes:
         if is_enchanter_node(node):
             enchanter = get_enchanter(node)
+            default_refining = None
 
         if enchanter in ENCHANTER_EXCLUDES:
             continue
 
+        if node.name == "h4":
+            default_refining = None
+
         if is_enchant_node(node):
+            if not default_refining:
+                default_refining = get_default_refining(node)
             enchlist.extend(
                 build_enchants(get_display_enchanter(enchanter), node, equips)
             )

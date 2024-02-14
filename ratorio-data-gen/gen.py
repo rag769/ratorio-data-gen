@@ -63,8 +63,8 @@ def main():
     enchlist = []
     enchlist.extend(special.crawl(equips))
     enchlist.extend(pharos.crawl(equips))
-    enchlist.extend(fides.crawl(equips))
-    enchlist.extend(clock.crawl(equips))
+    # enchlist.extend(fides.crawl(equips))
+    # enchlist.extend(clock.crawl(equips))
     # star.crawl(equips)
 
     lists = []
@@ -137,5 +137,4 @@ def main():
 
 
 if __name__ == "__main__":
-    dat = item.create_item([550028,"アドゥルテル・フィデス・フォックステイル"])
-    print(str(dat).replace("'", '"'))
+    main()
